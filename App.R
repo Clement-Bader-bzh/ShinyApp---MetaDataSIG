@@ -61,7 +61,7 @@ ui <- navbarPage("SIG - Méta-Données",windowTitle = "MétaDonnées SIG", colla
                    "Interroger les méta-données",
                    
                    # Titre du panel N°1
-                   titlePanel("Module de recherche des variables en base"),hr(),
+                   titlePanel("Module de d'interrogation des variables en base"),hr(),
                    
                    # Création double fenêtre (sidebar + mainpanel)
                    sidebarLayout(
@@ -103,12 +103,13 @@ ui <- navbarPage("SIG - Méta-Données",windowTitle = "MétaDonnées SIG", colla
                              condition = "input.select_schema == 'Un ou plusieurs schéma(s)'",
                              radioButtons(
                                "select_table",
-                               label = "Tables de données",
+                               label = "Table de données",
                                choices = c("Toutes les tables du schéma", "Une ou plusieurs table(s)")
                              )
                            ),
                            
-                           # sélection de la table
+                           
+                           # Sélection conditionnel de la table parmi les schméa sélectionnée (partie en server)
                            conditionalPanel(
                              condition = "input.select_table == 'Une ou plusieurs table(s)'",
                              selectInput(
@@ -127,14 +128,16 @@ ui <- navbarPage("SIG - Méta-Données",windowTitle = "MétaDonnées SIG", colla
                        ),
                        
                        
-                       # Sélection de variables et export dictionnaire de variables
+                       # Sélection conditionnelle des variables parmi les schéma et tables choisies + export dictionnaire de variables
                        hr(),
-                       tags$b("Générer une dictionnaire de variables"),
+                       tags$b("Générer un dictionnaire des variables"),
                        br(), 
                        em("Pour permettre la sélection choisir au moins un schéma et une table."),
                        br(),
                        conditionalPanel(condition = "input.select_table == 'Une ou plusieurs table(s)'", 
-                                        em("Le thésaurus contient toutes les variables existantes, mais seules celles des schéma et table choisies peuvent être sélectionnées."), br(),br(),
+                                        br(),
+                                        em("Les variables sont choisies parmi les tables et schémas sélectionnés. Elles seront inclues dans le dictionnaire de variables généré au format .xlsx et téléchargeable ci-dessous."),
+                                        br(),br(),
                                         selectInput("var_bdd", label = "Variables d'intérêt", choices = dbGetQuery(writing, "SELECT DISTINCT column_name FROM information_schema.columns"), multiple = TRUE),
                                         downloadButton("download_dic_var", label = "Générer le dictionnaire (.xlsx)"))
                        
@@ -155,19 +158,42 @@ ui <- navbarPage("SIG - Méta-Données",windowTitle = "MétaDonnées SIG", colla
                    # Titre de la fenêtre
                    titlePanel("Générateur de SQL - Renseignement Méta-Données"), hr(), 
                    
-                 ),
-                 
-                 tabPanel("Export dictionnaire de variables",
-                          
-                          # Titre
-                          titlePanel("Module d'édition de dictionnaire de variables"), hr()
                  )
+                 
+
 )
 
 
 # --- PARTIE SERVER -------------------------------
 
 server <- function(input, output, session){
+  
+  
+  # SELECTION DE TABLE CONDITIONNELLEMENT au schéma choisi
+  observe({
+    x <- dbGetQuery(writing, "SELECT table_name, table_schema from information_schema.columns") %>%
+      filter(table_schema %in% (input$schema_bdd))
+    
+    # Can also set the label and select items
+    updateSelectInput(session, "table_bdd",
+                      label = "Sélection de table(s) de données",
+                      choices = x$table_name
+    )
+  })
+  
+  
+  # SELECTION DES VARIABLES CONDITIONNELLEMENT AUX SCHEMAS ET TABLES CHOISI(E)S
+  observe({
+    x <- dbGetQuery(writing, "SELECT table_name, table_schema, column_name from information_schema.columns") %>%
+      filter(table_schema %in% (input$schema_bdd), table_name %in% (input$table_bdd))
+    
+    # Can also set the label and select items
+    updateSelectInput(session, "var_bdd",
+                      label = "Variables d'intérêt",
+                      choices = x$column_name
+    )
+  })
+  
   
   # Création de la table d'attributs
   tab_attrib <- reactive({
