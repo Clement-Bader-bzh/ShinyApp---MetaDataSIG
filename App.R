@@ -86,10 +86,7 @@ ui <- navbarPage("SIG - Méta-Données",windowTitle = "MétaDonnées SIG", colla
                                "schema_bdd",
                                label = "Sélection de schéma(s) de données",
                                multiple = TRUE,
-                               choices = dbGetQuery(
-                                 con,
-                                 "SELECT DISTINCT table_schema FROM information_schema.columns"
-                               )
+                               choices = dbGetQuery(con, "SELECT DISTINCT table_schema FROM information_schema.columns")
                              )
                            ),
                            
@@ -157,6 +154,64 @@ ui <- navbarPage("SIG - Méta-Données",windowTitle = "MétaDonnées SIG", colla
                    
                    # Titre de la fenêtre
                    titlePanel("Générateur de SQL - Renseignement Méta-Données"), hr(), 
+                   
+                   # Création d'un affichage avec menu latéral gauche
+                   sidebarLayout(
+                     
+                     # Menu de gauche
+                     sidebarPanel(
+                       
+                       # Titre
+                       tags$h4("Importer un fichier de libellés"),
+                       hr(), 
+
+                       # Type de fichier considéré
+                       radioButtons("type_file", label = "Type de fichier", choices = c('Fichier Excel', 'Autre fichier')),
+                       
+                       # Paramètres généraux
+                       tags$b("Libellé des colonnes"),
+                       checkboxInput(inputId = 'header', label = 'Libellés en première ligne', value = FALSE),
+
+                       # Liste de paramètre (fichier excel)
+                       conditionalPanel(condition = "input.type_file == 'Fichier Excel'", textInput("sheet_names", label = "Nom de la feuille du classeur", value = "Renseigner un libellé")),
+                       
+                       # Liste de paramètres (autre fichier)
+                       conditionalPanel(condition = "input.type_file == 'Autre fichier'",radioButtons(inputId = 'sep', label = 'Séparateur de données', choices = c("Virgule"=',',"Point-Virgule"=';',"Tabulation"='\t', "Espace"=''), selected = ';')),
+                       
+                       # Module de chargement des données
+                       conditionalPanel(condition = "input.sheet_names != 'Renseigner un libellé'", fileInput("file", "")),
+                       conditionalPanel(condition = "input.type_file == 'Autre fichier'", fileInput("file", "")), 
+                       
+                       # Sélection des colonnes pour correspondance variable / libellé
+                       hr(),
+                       tags$h4("Ajout dans la table d'attributs"), hr(),
+                       
+                       column(width = 5,
+                              selectInput("var_id", label = "Colonne des variables", choices = "", multiple = FALSE),
+                              selectInput("label_id", label = "Colonne des libellés", choices = "", multiple = FALSE)
+                              ),
+                       
+                       column(width = 2),
+                       
+                       column(width = 5, 
+                              selectInput("schema_id", label = "Schéma de référence", choices = dbGetQuery(con, "SELECT DISTINCT table_schema FROM information_schema.columns"), multiple = FALSE),
+                              selectInput("table_id", label = "Table de référence", choices = "", multiple = FALSE)
+                              ),
+
+
+                       actionButton("add", label = "Metre à jour la table d'attributs")
+                       
+                     ),
+                     
+                     # Fenêtre principale (droite)
+                     mainPanel(
+                       
+                       # Affichage de la table importée
+                       tableOutput("table")
+                       
+                     )
+                   )
+                       
                    
                  )
                  
@@ -248,6 +303,67 @@ server <- function(input, output, session){
       write.xlsx(tab_dictionnaire(), file, rowNames = FALSE, sep=";")
     }
   )
+  
+  
+  # IMPORT FICHIER - Transformation du fichier en jeu de données
+  data <- reactive({
+    file1 <- input$file
+    if(is.null(file1)){return()
+    }else{
+      if(input$type_file == 'Fichier Excel'){
+        
+        if(is.null(input$sheet_names)){return()}else{read.xlsx(xlsxFile = file1$datapath, sheet = input$sheet_names, colNames = input$header)}
+        
+      }else{
+        read.table(file=file1$datapath, sep=input$sep, header = input$header, stringsAsFactors = input$stringAsFactors)
+      }
+      
+    } 
+    
+  })
+  
+  # IMPORT FICHIER - Affichage table de données
+  output$table <- renderTable({
+    if(is.null(data())){return ()}
+    data()
+  })
+  
+  # IMPORT - Sélectionner le libellé de colonne "variable"
+  observe({
+    x <- data() 
+    y <- names(x)
+    
+    # Can also set the label and select items
+    updateSelectInput(session, "var_id",
+                      label = "Colonne des variables",
+                      choices = y
+    )
+  })
+  
+  # IMPORT - Sélectionner le libellé de colonne "variable"
+  observe({
+    x <- data() 
+    y <- names(x)
+    
+    # Can also set the label and select items
+    updateSelectInput(session, "label_id",
+                      label = "Colonne des libellés",
+                      choices = y
+    )
+  })
+  
+  # IMPORT - Choix de la table (selon schéma sélectionné)
+  observe({
+    x <- dbGetQuery(writing, "SELECT table_name, table_schema from information_schema.columns") %>%
+      filter(table_schema %in% (input$schema_id))
+    
+    # Can also set the label and select items
+    updateSelectInput(session, "table_id",
+                      label = "Sélection de table(s) de données",
+                      choices = x$table_name
+    )
+  })
+  
   
 }
 
