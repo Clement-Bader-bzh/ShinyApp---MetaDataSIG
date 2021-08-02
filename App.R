@@ -22,6 +22,7 @@ library(DT)
 library(shinythemes)
 library(shinyjs)
 library(RColorBrewer)
+library(stringr)
 
 
 # Ouverture en lecture
@@ -153,7 +154,7 @@ ui <- navbarPage("SIG - Méta-Données",windowTitle = "MétaDonnées SIG", colla
                    "Aide à la saisie des méta-données",
                    
                    # Titre de la fenêtre
-                   titlePanel("Générateur de SQL - Renseignement Méta-Données"), hr(), 
+                   titlePanel("Renseigner des libellés depuis un fichier Excel"), hr(), 
                    
                    # Création d'un affichage avec menu latéral gauche
                    sidebarLayout(
@@ -162,7 +163,7 @@ ui <- navbarPage("SIG - Méta-Données",windowTitle = "MétaDonnées SIG", colla
                      sidebarPanel(
                        
                        # Titre
-                       tags$h4("Importer un fichier de libellés"),
+                       tags$h4(tags$b("Importer un fichier de libellés")),
                        hr(), 
 
                        # Type de fichier considéré
@@ -171,20 +172,27 @@ ui <- navbarPage("SIG - Méta-Données",windowTitle = "MétaDonnées SIG", colla
                        # Paramètres généraux
                        tags$b("Libellé des colonnes"),
                        checkboxInput(inputId = 'header', label = 'Libellés en première ligne', value = FALSE),
-
-                       # Liste de paramètre (fichier excel)
-                       conditionalPanel(condition = "input.type_file == 'Fichier Excel'", textInput("sheet_names", label = "Nom de la feuille du classeur", value = "Renseigner un libellé")),
                        
                        # Liste de paramètres (autre fichier)
                        conditionalPanel(condition = "input.type_file == 'Autre fichier'",radioButtons(inputId = 'sep', label = 'Séparateur de données', choices = c("Virgule"=',',"Point-Virgule"=';',"Tabulation"='\t', "Espace"=''), selected = ';')),
                        
-                       # Module de chargement des données
-                       conditionalPanel(condition = "input.sheet_names != 'Renseigner un libellé'", fileInput("file", "")),
+                       # Module de chargement des données - FICHIER EXCEL
+                       fluidRow(
+                         column(width = 9,
+                                conditionalPanel(condition = "input.type_file == 'Fichier Excel'", fileInput("file", ""))
+                         ),
+                         column(width = 3,
+                                conditionalPanel(condition = "input.type_file == 'Fichier Excel'", numericInput("sheet_num", label = "N° feuille", value = 1, min = 1)),
+                         )
+                       ),
+
+                       
+                       # Module de chargement de données - autre fichier
                        conditionalPanel(condition = "input.type_file == 'Autre fichier'", fileInput("file", "")), 
                        
                        # Sélection des colonnes pour correspondance variable / libellé
                        hr(),
-                       tags$h4("Ajout dans la table d'attributs"), hr(),
+                       tags$h4(tags$b("Ajout dans la table d'attributs")), hr(),
                        
                        column(width = 5,
                               selectInput("var_id", label = "Colonne des variables", choices = "", multiple = FALSE),
@@ -199,7 +207,16 @@ ui <- navbarPage("SIG - Méta-Données",windowTitle = "MétaDonnées SIG", colla
                               ),
 
 
-                       actionButton("add", label = "Metre à jour la table d'attributs")
+                       hr(),
+                       br(),
+                       actionButton("add", label = "Metre à jour la table d'attributs"),
+                       conditionalPanel(
+                         condition = "input.var_id != ''",
+                         hr(),
+                         tags$h4(tags$b("Détection des problèmes de correspondance")),
+                         em("Variable issue du fichier Excel n'exitant pas dans la base de données du SIG. Si aucune ligne n'est présentée, toutes les variables du fichier Excel existent dans la base de données."),
+                         DTOutput("tab_verif")   
+                       )
                        
                      ),
                      
@@ -207,8 +224,7 @@ ui <- navbarPage("SIG - Méta-Données",windowTitle = "MétaDonnées SIG", colla
                      mainPanel(
                        
                        # Affichage de la table importée
-                       tableOutput("table")
-                       
+                       tableOutput("table")                   
                      )
                    )
                        
@@ -312,7 +328,8 @@ server <- function(input, output, session){
     }else{
       if(input$type_file == 'Fichier Excel'){
         
-        if(is.null(input$sheet_names)){return()}else{read.xlsx(xlsxFile = file1$datapath, sheet = input$sheet_names, colNames = input$header)}
+        # if(is.null(input$sheet_names)){return()}else{read.xlsx(xlsxFile = file1$datapath, sheet = input$sheet_names, colNames = input$header)}
+        read.xlsx(xlsxFile = file1$datapath, sheet = input$sheet_num, colNames = input$header)
         
       }else{
         read.table(file=file1$datapath, sep=input$sep, header = input$header, stringsAsFactors = input$stringAsFactors)
@@ -359,10 +376,74 @@ server <- function(input, output, session){
     
     # Can also set the label and select items
     updateSelectInput(session, "table_id",
-                      label = "Sélection de table(s) de données",
+                      label = "Table de référence",
                       choices = x$table_name
     )
   })
+  
+  # Lancement des requêtes SQL à l'activation du boutton
+  observeEvent(input$add, {
+    
+    # Récupération de la table de données
+    data <- data()
+    
+    # Liste des variables en base
+    liste_var_bd <- data.frame(var = names(dbGetQuery(con, paste0("SELECT * FROM ", input$schema_id, ".", input$table_id))))
+    
+    # Création d'une table avec deux variables (variable et libellé)
+    temp  <- data %>% select(input$var_id, input$label_id) 
+    
+    # Remplacement des guillemets 
+    temp[,2] <- str_replace_all(temp[,2], "'", "-")
+    temp[,2] <- str_replace_all(temp[,2], '"', "-")
+    
+    # Création de la requête
+    temp$requete <- paste0("COMMENT ON COLUMN ", input$schema_id, ".", input$table_id, ".", temp[,1], " IS '", temp[,2], "'")
+    
+    # Conservation uniquement des variables existant en BDD
+    temp$var <- temp[,1]
+    temp2 <- inner_join(temp, liste_var_bd, by = "var") 
+    
+    # Initialisation du compteur
+    i <- 1
+    
+    # Lancement de la boucle sur toutes les lignes
+    while(i <= nrow(temp2)){
+      
+      dbGetQuery(writing, temp2[i,"requete"])
+      
+      i <- i+1
+      
+    }
+    
+    # affichage notification
+    showNotification("Intégration des méta-données réalisée", type = "message")
+    
+  })
+  
+  output$tab_verif <- renderDataTable(options = list(paging = FALSE, searching = FALSE), {
+    
+    # Récupération de la table de données
+    data <- data()
+    
+    # LIste des variables en base
+    liste_var_bd <- data.frame(var = names(dbGetQuery(con, paste0("SELECT * FROM ", input$schema_id, ".", input$table_id))))
+    liste_var_bd$dispo <- "Existe en BDSIG"
+    
+    # Création d'une table avec deux variables (variable et libellé)
+    temp  <- data %>%
+      select(input$var_id, input$label_id)
+    
+    temp$var <- temp[,1]
+    temp$indispo <- "N'existe pas dans la table choisie de la BDSIG (sera retirée lors de l'intégration des libellés)"
+    
+    left_join(temp, liste_var_bd, by = "var") %>%
+      filter(is.na(dispo)) %>%
+      select(var, indispo) %>%
+      rename(Variable = var, "Disponibilité en BDD" = indispo)
+
+  })
+  
   
   
 }
