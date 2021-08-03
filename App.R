@@ -143,7 +143,25 @@ ui <- navbarPage("SIG - Méta-Données",windowTitle = "MétaDonnées SIG", colla
                      ),
                      
                      # Fenêtre principale (mainpanel)
-                     mainPanel(dataTableOutput("visualisation"))
+                     mainPanel(
+                       
+                       # Affichage du commentaire de la table
+                       fluidRow(
+                         tags$b("Commentaires renseignés pour cette table de données : "), 
+                         br(),
+                         tags$em("Affiche <NA> si aucun commentaire n'a été renseigné"),
+                         br()
+                       ),
+
+                       fluidRow(width = 8, offset = 2, align = "center",
+                         h4(textOutput("com_table")),
+                         hr()
+                       ),
+                       
+                       # Visualisation des attributs
+                       dataTableOutput("visualisation")
+                       
+                       )
                      
                      
                    )
@@ -296,10 +314,42 @@ server <- function(input, output, session){
   output$visualisation <- renderDataTable(
     DT::datatable(
       tab_attrib(),
-      options = list(pageLength = 20, scrollX = TRUE),
+      options = list(pageLength = 15, scrollX = TRUE),
       filter = "top",
       rownames = FALSE)
   )
+  
+  # Commentaire de la table (première table du premier schéma)
+  com_obj <- reactive({
+    
+    if(length(input$schema_bdd) == 1 & length(input$table_bdd) == 1){
+      
+      # Création requête pour la table concernée
+      req_com_table <- paste0("SELECT obj_description('", input$schema_bdd, ".", input$table_bdd, "'::regclass)")
+      
+      # Récupération du champ commentaire sous forme de table
+      com <- dbGetQuery(con, req_com_table[1])
+      
+      # Sortie du texte
+      # cat(com[1,1])
+      com[1,1]
+      
+    }else{
+      
+      if(length(input$schema_bdd) < 1 | length(input$table_bdd) < 1){
+        com <- "--- Sélectionner un schéma et une table de données ---"
+      }else{
+        com <- "--- Ne sélectionner qu'un seul schéma et une seule table pour afficher le commentaire ---"
+      }
+
+      
+    }
+
+    
+  })
+  
+  # Sortie du texte
+  output$com_table <- renderText(com_obj())
   
   # Sélecteur des variables d'intérêt (pour export)
   tab_dictionnaire <- reactive({
